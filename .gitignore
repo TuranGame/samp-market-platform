@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+data/
+uploads/
+*.log
+app/build/
+.gradle/
+local.properties
+logcat.txt
