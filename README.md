@@ -1,4 +1,4 @@
-# SAMP MARKET Platform
+# SAMP STORE Platform
 
 Render-ready full-stack platform for the Android app.
 

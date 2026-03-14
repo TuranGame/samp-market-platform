@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "SampMarket"
+rootProject.name = "SampStore"
 include(":app")

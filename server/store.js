@@ -9,6 +9,10 @@ const STORE_PATH = path.join(DATA_DIR, "store.json");
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 
 const seedData = {
+  meta: {
+    brand: "SAMP STORE",
+    owner: "SAMP STUDIO & AZIZ"
+  },
   users: [],
   categories: [
     { id: "cat-apk", name: "APK", slug: "apk", accent: "#1e8e63" },
@@ -20,24 +24,24 @@ const seedData = {
     {
       id: nanoid(),
       title: {
-        uz: "SAMP MARKET platformasi ishga tushdi",
-        ru: "Платформа SAMP MARKET запущена"
+        uz: "SAMP STORE platformasi ishga tushdi",
+        ru: "Платформа SAMP STORE запущена"
       },
       body: {
-        uz: "Sayt va API endi bir joydan ishlaydi. Android ilova keyingi bosqichda shu backendga ulanadi.",
-        ru: "Сайт и API теперь работают из одного места. Android-приложение на следующем этапе будет подключено к этому backend."
+        uz: "Sayt, Android ilova va account tizimi endi bitta backend orqali ishlaydi.",
+        ru: "Сайт, Android-приложение и система аккаунтов теперь работают через единый backend."
       },
       createdAt: new Date().toISOString()
     },
     {
       id: nanoid(),
       title: {
-        uz: "Render uchun deploy fayllari tayyor",
-        ru: "Файлы для деплоя на Render готовы"
+        uz: "Yagona baza va fayl markazi tayyor",
+        ru: "Единая база и центр файлов готовы"
       },
       body: {
-        uz: "Persistent disk bilan yuklangan fayllar va ma'lumotlar saqlanadi.",
-        ru: "С persistent disk будут сохраняться загруженные файлы и данные."
+        uz: "Publikatsiyalar, reytinglar va izohlar sayt hamda ilova o'rtasida umumiy bo'ladi.",
+        ru: "Публикации, рейтинги и комментарии будут общими для сайта и приложения."
       },
       createdAt: new Date(Date.now() - 86400000).toISOString()
     }
@@ -50,9 +54,9 @@ const seedData = {
       category: "launcher",
       language: "all",
       authorId: "system",
-      authorName: "SAMP Studio",
+      authorName: "SAMP STUDIO & AZIZ",
       version: "1.0.0",
-      downloadUrl: "https://example.com/turan-launcher.apk",
+      downloadUrl: "https://turan-rp.uz",
       coverUrl: "",
       fileUrl: "",
       size: "26 MB",
@@ -68,9 +72,9 @@ const seedData = {
       category: "mods",
       language: "all",
       authorId: "system",
-      authorName: "SAMP Studio",
+      authorName: "SAMP STUDIO & AZIZ",
       version: "2.4.1",
-      downloadUrl: "https://example.com/arizona-neon.zip",
+      downloadUrl: "https://turan-rp.uz",
       coverUrl: "",
       fileUrl: "",
       size: "41 MB",
@@ -100,7 +104,11 @@ export function getDataPaths() {
 
 export function readStore() {
   ensureDataLayer();
-  return JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
+  const parsed = JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
+  if (!parsed.meta) {
+    parsed.meta = seedData.meta;
+  }
+  return parsed;
 }
 
 export function writeStore(data) {

@@ -161,6 +161,7 @@ app.get("/api/home", (req, res) => {
     .map(formatFile);
 
   res.json({
+    meta: store.meta,
     locale: getLanguage(req),
     stats: {
       totalFiles: store.files.length,
@@ -367,5 +368,5 @@ if (fs.existsSync(clientDist)) {
 }
 
 app.listen(PORT, () => {
-  console.log(`SAMP MARKET server running on http://localhost:${PORT}`);
+  console.log(`SAMP STORE server running on http://localhost:${PORT}`);
 });

@@ -1,23 +1,13 @@
 package uz.samp.studio
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -39,25 +28,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
-import androidx.compose.material.icons.outlined.Article
-import androidx.compose.material.icons.outlined.CloudUpload
-import androidx.compose.material.icons.outlined.Dashboard
-import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.InstallMobile
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Newspaper
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Star
-import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -66,11 +46,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,71 +57,185 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            SampMarketTheme {
+            SampStoreTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    SampMarketApp(this)
+                    SampStoreApp(this)
                 }
             }
         }
     }
 }
 
+private enum class AppStage { SPLASH, LANGUAGE, AUTH, HOME }
+private enum class AppLanguage { UZ, RU }
+private enum class MainTab { HOME, NEWS, SEARCH, PROFILE }
+
+private data class RemoteFile(
+    val id: String,
+    val title: String,
+    val description: String,
+    val category: String,
+    val version: String,
+    val size: String,
+    val authorName: String,
+    val downloads: Int,
+    val rating: Double
+)
+
+private data class RemoteNews(
+    val title: String,
+    val body: String
+)
+
+private data class ProfileState(
+    val email: String = "",
+    val nickname: String = "SAMP STUDIO & AZIZ",
+    val avatarUrl: String = "",
+    val siteUrl: String = "https://turan-rp.uz",
+    val token: String = ""
+)
+
+private data class HomePayload(
+    val latestFiles: List<RemoteFile>,
+    val topFiles: List<RemoteFile>,
+    val news: List<RemoteNews>,
+    val categories: List<String>
+)
+
+private object SampStoreApi {
+    private val client = OkHttpClient()
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+    suspend fun home(siteUrl: String, language: AppLanguage): HomePayload = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("${siteUrl.trimEnd('/')}/api/home")
+            .header("x-lang", if (language == AppLanguage.RU) "ru" else "uz")
+            .build()
+        val body = client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("Home load failed: ${response.code}")
+            response.body?.string().orEmpty()
+        }
+        val json = JSONObject(body)
+        HomePayload(
+            latestFiles = json.getJSONArray("latestFiles").toFiles(),
+            topFiles = json.getJSONArray("topFiles").toFiles(),
+            news = json.getJSONArray("news").toNews(language),
+            categories = json.getJSONArray("categories").toCategories()
+        )
+    }
+
+    suspend fun login(siteUrl: String, email: String, password: String): ProfileState = withContext(Dispatchers.IO) {
+        val payload = JSONObject()
+            .put("email", email)
+            .put("password", password)
+            .toString()
+            .toRequestBody(jsonMediaType)
+        val request = Request.Builder()
+            .url("${siteUrl.trimEnd('/')}/api/auth/login")
+            .post(payload)
+            .build()
+        val body = client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("Login failed: ${response.code}")
+            response.body?.string().orEmpty()
+        }
+        val json = JSONObject(body)
+        val user = json.getJSONObject("user")
+        ProfileState(
+            email = user.optString("email"),
+            nickname = user.optString("nickname", "SAMP STUDIO & AZIZ"),
+            avatarUrl = user.optString("avatarUrl"),
+            siteUrl = siteUrl,
+            token = json.optString("token")
+        )
+    }
+
+    suspend fun register(siteUrl: String, email: String, password: String, nickname: String): ProfileState =
+        withContext(Dispatchers.IO) {
+            val payload = JSONObject()
+                .put("email", email)
+                .put("password", password)
+                .put("nickname", nickname)
+                .toString()
+                .toRequestBody(jsonMediaType)
+            val request = Request.Builder()
+                .url("${siteUrl.trimEnd('/')}/api/auth/register")
+                .post(payload)
+                .build()
+            val body = client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("Register failed: ${response.code}")
+                response.body?.string().orEmpty()
+            }
+            val json = JSONObject(body)
+            val user = json.getJSONObject("user")
+            ProfileState(
+                email = user.optString("email"),
+                nickname = user.optString("nickname", nickname),
+                avatarUrl = user.optString("avatarUrl"),
+                siteUrl = siteUrl,
+                token = json.optString("token")
+            )
+        }
+
+    suspend fun updateProfile(profile: ProfileState): ProfileState = withContext(Dispatchers.IO) {
+        val payload = JSONObject()
+            .put("nickname", profile.nickname)
+            .put("avatarUrl", profile.avatarUrl)
+            .toString()
+            .toRequestBody(jsonMediaType)
+        val request = Request.Builder()
+            .url("${profile.siteUrl.trimEnd('/')}/api/profile")
+            .put(payload)
+            .header("Authorization", "Bearer ${profile.token}")
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("Profile save failed: ${response.code}")
+        }
+        profile
+    }
+}
+
 @Composable
-private fun SampMarketTheme(content: @Composable () -> Unit) {
+private fun SampStoreTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = androidx.compose.material3.lightColorScheme(
-            primary = Color(0xFF005B4F),
+            primary = Color(0xFF0C6B57),
             onPrimary = Color.White,
-            secondary = Color(0xFFDB7C26),
-            background = Color(0xFFF6F1E8),
+            secondary = Color(0xFFE6942E),
+            background = Color(0xFFF3EFE8),
             surface = Color(0xFFFFFBF6),
-            onSurface = Color(0xFF1C1B1A)
+            onSurface = Color(0xFF1B1A18)
         ),
         content = content
     )
 }
 
-private enum class AppStage { SPLASH, LANGUAGE, AUTH, HOME }
-private enum class AppLanguage { UZ, RU }
-private enum class MainTab { NEWS, SEARCH, HOME, CATEGORIES, FEED }
-
-private data class CatalogItem(
-    val title: String,
-    val description: String,
-    val category: String,
-    val author: String,
-    val rating: Float,
-    val isApk: Boolean = false
-)
-
-private data class ProfileState(
-    val email: String = "",
-    val nickname: String = "SAMP Player",
-    val avatarUrl: String = "",
-    val baseUrl: String = "https://localhost:8080"
-)
-
 @Composable
-private fun SampMarketApp(context: Context) {
-    val prefs = remember { context.getSharedPreferences("samp_market_prefs", Context.MODE_PRIVATE) }
+private fun SampStoreApp(context: Context) {
+    val prefs = remember { context.getSharedPreferences("samp_store_prefs", Context.MODE_PRIVATE) }
+    val scope = rememberCoroutineScope()
     var language by rememberSaveable {
         mutableStateOf(
             when (prefs.getString("language", null)) {
@@ -158,123 +250,146 @@ private fun SampMarketApp(context: Context) {
         mutableStateOf(
             ProfileState(
                 email = prefs.getString("email", "") ?: "",
-                nickname = prefs.getString("nickname", "SAMP Player") ?: "SAMP Player",
+                nickname = prefs.getString("nickname", "SAMP STUDIO & AZIZ") ?: "SAMP STUDIO & AZIZ",
                 avatarUrl = prefs.getString("avatar_url", "") ?: "",
-                baseUrl = prefs.getString("base_url", "https://localhost:8080") ?: "https://localhost:8080"
+                siteUrl = prefs.getString("site_url", "https://turan-rp.uz") ?: "https://turan-rp.uz",
+                token = prefs.getString("token", "") ?: ""
             )
         )
     }
-    val latestItems = remember {
-        mutableStateListOf(
-            CatalogItem("Arizona Mobile Pack", "APK va mod to'plami", "APK", "Admin", 4.8f, true),
-            CatalogItem("SAMP HUD Neon", "Yorqin interfeys to'plami", "Mod", "Studio", 4.6f),
-            CatalogItem("Turan RP Launcher", "Serverga ulanish uchun launcher", "Launcher", "Turan", 4.9f, true)
-        )
-    }
-    val newsItems = remember {
-        listOf(
-            "Yangi publikasiyalar lentaga qo'shildi",
-            "APK yuklash interfeysi tayyor",
-            "O'zbek va rus tillari lokal rejimda ishlayapti"
-        )
-    }
-    val currentTexts = texts(language ?: AppLanguage.UZ)
+    var home by remember { mutableStateOf<HomePayload?>(null) }
+    val files = remember { mutableStateListOf<RemoteFile>() }
+    var message by rememberSaveable { mutableStateOf("") }
+    val t = texts(language ?: AppLanguage.UZ)
 
     LaunchedEffect(Unit) {
-        delay(1800)
         stage = when {
             language == null -> AppStage.LANGUAGE
-            prefs.getBoolean("is_logged_in", false) -> AppStage.HOME
-            else -> AppStage.AUTH
+            profile.token.isBlank() -> AppStage.AUTH
+            else -> AppStage.HOME
+        }
+        if (profile.token.isNotBlank()) {
+            runCatching {
+                val payload = SampStoreApi.home(profile.siteUrl, language ?: AppLanguage.UZ)
+                home = payload
+                files.clear()
+                files.addAll(payload.latestFiles)
+            }.onFailure {
+                message = it.message ?: t.networkError
+            }
         }
     }
 
-    AnimatedContent(targetState = stage, label = "stage") { currentStage ->
-        when (currentStage) {
-            AppStage.SPLASH -> SplashScreen(currentTexts)
-            AppStage.LANGUAGE -> LanguageScreen(
-                onSelect = {
-                    language = it
-                    prefs.edit().putString("language", if (it == AppLanguage.UZ) "uz" else "ru").apply()
-                    stage = AppStage.AUTH
-                }
-            )
-            AppStage.AUTH -> AuthScreen(
-                t = currentTexts,
-                initialEmail = profile.email,
-                onAuth = { email, password ->
-                    if (email.isBlank() || password.length < 4) {
-                        Toast.makeText(context, currentTexts.invalidLogin, Toast.LENGTH_SHORT).show()
-                    } else {
-                        profile = profile.copy(email = email)
+    when (stage) {
+        AppStage.SPLASH -> SplashScreen(t)
+        AppStage.LANGUAGE -> LanguageScreen {
+            language = it
+            prefs.edit().putString("language", if (it == AppLanguage.RU) "ru" else "uz").apply()
+            stage = if (profile.token.isBlank()) AppStage.AUTH else AppStage.HOME
+        }
+        AppStage.AUTH -> AuthScreen(
+            t = t,
+            profile = profile,
+            message = message,
+            onAuth = { email, password, nickname, isRegister ->
+                scope.launch {
+                    runCatching {
+                        val nextProfile = if (isRegister) {
+                            SampStoreApi.register(profile.siteUrl, email, password, nickname)
+                        } else {
+                            SampStoreApi.login(profile.siteUrl, email, password)
+                        }
+                        profile = nextProfile
                         prefs.edit()
-                            .putString("email", email)
-                            .putBoolean("is_logged_in", true)
+                            .putString("email", nextProfile.email)
+                            .putString("nickname", nextProfile.nickname)
+                            .putString("avatar_url", nextProfile.avatarUrl)
+                            .putString("site_url", nextProfile.siteUrl)
+                            .putString("token", nextProfile.token)
                             .apply()
+                        val payload = SampStoreApi.home(nextProfile.siteUrl, language ?: AppLanguage.UZ)
+                        home = payload
+                        files.clear()
+                        files.addAll(payload.latestFiles)
+                        message = ""
                         stage = AppStage.HOME
+                    }.onFailure {
+                        message = it.message ?: t.networkError
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     }
                 }
-            )
-            AppStage.HOME -> HomeScreen(
-                t = currentTexts,
-                profile = profile,
-                latestItems = latestItems,
-                newsItems = newsItems,
-                onSaveProfile = { updated ->
-                    profile = updated
-                    prefs.edit()
-                        .putString("email", updated.email)
-                        .putString("nickname", updated.nickname)
-                        .putString("avatar_url", updated.avatarUrl)
-                        .putString("base_url", updated.baseUrl)
-                        .apply()
-                },
-                onLanguageChange = {
-                    language = it
-                    prefs.edit().putString("language", if (it == AppLanguage.UZ) "uz" else "ru").apply()
-                },
-                onLogout = {
-                    prefs.edit().putBoolean("is_logged_in", false).apply()
-                    stage = AppStage.AUTH
-                },
-                onUploadCompleted = { latestItems.add(0, it) }
-            )
-        }
+            },
+            onChangeUrl = {
+                profile = profile.copy(siteUrl = it)
+                prefs.edit().putString("site_url", it).apply()
+            }
+        )
+        AppStage.HOME -> HomeScreen(
+            t = t,
+            profile = profile,
+            home = home,
+            files = files,
+            message = message,
+            onReload = {
+                scope.launch {
+                    runCatching {
+                        val payload = SampStoreApi.home(profile.siteUrl, language ?: AppLanguage.UZ)
+                        home = payload
+                        files.clear()
+                        files.addAll(payload.latestFiles)
+                    }.onFailure {
+                        message = it.message ?: t.networkError
+                    }
+                }
+            },
+            onSaveProfile = { updated ->
+                scope.launch {
+                    runCatching {
+                        val next = SampStoreApi.updateProfile(updated)
+                        profile = next
+                        prefs.edit()
+                            .putString("nickname", next.nickname)
+                            .putString("avatar_url", next.avatarUrl)
+                            .putString("site_url", next.siteUrl)
+                            .apply()
+                        message = t.saved
+                    }.onFailure {
+                        message = it.message ?: t.networkError
+                    }
+                }
+            },
+            onLanguageChange = {
+                language = it
+                prefs.edit().putString("language", if (it == AppLanguage.RU) "ru" else "uz").apply()
+            },
+            onLogout = {
+                profile = profile.copy(token = "", email = "")
+                prefs.edit().remove("token").remove("email").apply()
+                stage = AppStage.AUTH
+            }
+        )
     }
 }
 
 @Composable
 private fun SplashScreen(t: Strings) {
-    val transition = rememberInfiniteTransition(label = "pulse")
-    val alpha by transition.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(animation = tween(1200), repeatMode = RepeatMode.Reverse),
-        label = "alpha"
-    )
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF062925), Color(0xFF0E4F46), Color(0xFFDB7C26))
-                )
-            ),
+            .background(Brush.verticalGradient(listOf(Color(0xFF082822), Color(0xFF0E564B), Color(0xFFE6942E)))),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
-                modifier = Modifier
-                    .size(110.dp)
-                    .background(Color.White.copy(alpha = 0.18f), CircleShape),
+                modifier = Modifier.size(110.dp).background(Color.White.copy(alpha = 0.16f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text("S", color = Color.White, fontSize = 54.sp, fontWeight = FontWeight.Black)
+                Text("S", color = Color.White, fontSize = 52.sp, fontWeight = FontWeight.Black)
             }
-            Spacer(Modifier.height(18.dp))
-            Text("SAMP MARKET", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
-            Spacer(Modifier.height(10.dp))
-            Text(t.loading, color = Color.White, modifier = Modifier.alpha(alpha), fontSize = 16.sp)
+            Spacer(Modifier.height(16.dp))
+            Text("SAMP STORE", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+            Spacer(Modifier.height(8.dp))
+            Text(t.owner, color = Color.White.copy(alpha = 0.88f))
         }
     }
 }
@@ -284,74 +399,63 @@ private fun LanguageScreen(onSelect: (AppLanguage) -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.linearGradient(listOf(Color(0xFFF6F1E8), Color(0xFFD7E7D8), Color(0xFFFFD4A7))))
+            .background(Brush.linearGradient(listOf(Color(0xFFF2EEE7), Color(0xFFDDE8DF), Color(0xFFFFD3A2))))
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
-        Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.96f))) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Icon(Icons.Outlined.Language, contentDescription = null, tint = Color(0xFF005B4F), modifier = Modifier.size(40.dp))
-                Spacer(Modifier.height(14.dp))
+        Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Outlined.Language, contentDescription = null, tint = Color(0xFF0C6B57), modifier = Modifier.size(42.dp))
+                Spacer(Modifier.height(16.dp))
                 Text("Tilni tanlang / Выберите язык", fontWeight = FontWeight.Bold, fontSize = 24.sp, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(20.dp))
-                Button(onClick = { onSelect(AppLanguage.UZ) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("O'zbekcha")
-                }
+                Button(onClick = { onSelect(AppLanguage.UZ) }, modifier = Modifier.fillMaxWidth()) { Text("O'zbekcha") }
                 Spacer(Modifier.height(12.dp))
-                OutlinedButton(onClick = { onSelect(AppLanguage.RU) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Русский")
-                }
+                OutlinedButton(onClick = { onSelect(AppLanguage.RU) }, modifier = Modifier.fillMaxWidth()) { Text("Русский") }
             }
         }
     }
 }
 
 @Composable
-private fun AuthScreen(t: Strings, initialEmail: String, onAuth: (String, String) -> Unit) {
-    var email by rememberSaveable { mutableStateOf(initialEmail) }
+private fun AuthScreen(
+    t: Strings,
+    profile: ProfileState,
+    message: String,
+    onAuth: (String, String, String, Boolean) -> Unit,
+    onChangeUrl: (String) -> Unit
+) {
+    var email by rememberSaveable { mutableStateOf(profile.email) }
     var password by rememberSaveable { mutableStateOf("") }
+    var nickname by rememberSaveable { mutableStateOf(profile.nickname) }
+    var siteUrl by rememberSaveable { mutableStateOf(profile.siteUrl) }
     var isRegister by rememberSaveable { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFFF7F0E4), Color(0xFFE8EFE7))))
+            .background(Brush.verticalGradient(listOf(Color(0xFFF8F0E4), Color(0xFFE8F0E7))))
             .padding(20.dp),
         contentAlignment = Alignment.Center
     ) {
         Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text(t.welcomeTitle, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-                Spacer(Modifier.height(8.dp))
-                Text(t.authSubtitle, color = Color(0xFF57514C))
-                Spacer(Modifier.height(20.dp))
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text(t.email) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
-                )
-                Spacer(Modifier.height(14.dp))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text(t.password) },
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                Spacer(Modifier.height(18.dp))
-                Button(onClick = { onAuth(email, password) }, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (isRegister) t.register else t.login, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+                Text(t.authSubtitle, color = Color(0xFF5D5751))
+                OutlinedTextField(value = siteUrl, onValueChange = { siteUrl = it; onChangeUrl(it) }, modifier = Modifier.fillMaxWidth(), label = { Text(t.siteUrl) })
+                if (isRegister) {
+                    OutlinedTextField(value = nickname, onValueChange = { nickname = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.nickname) })
+                }
+                OutlinedTextField(value = email, onValueChange = { email = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.email) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                OutlinedTextField(value = password, onValueChange = { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.password) }, visualTransformation = PasswordVisualTransformation())
+                Button(onClick = { onAuth(email, password, nickname, isRegister) }, modifier = Modifier.fillMaxWidth()) {
                     Text(if (isRegister) t.register else t.login)
                 }
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { isRegister = !isRegister }, modifier = Modifier.align(Alignment.End)) {
+                OutlinedButton(onClick = { isRegister = !isRegister }, modifier = Modifier.fillMaxWidth()) {
                     Text(if (isRegister) t.haveAccount else t.needAccount)
+                }
+                if (message.isNotBlank()) {
+                    Text(message, color = Color(0xFFB12A2A))
                 }
             }
         }
@@ -362,477 +466,260 @@ private fun AuthScreen(t: Strings, initialEmail: String, onAuth: (String, String
 private fun HomeScreen(
     t: Strings,
     profile: ProfileState,
-    latestItems: List<CatalogItem>,
-    newsItems: List<String>,
-    onSaveProfile: (ProfileState) -> Unit,
-    onLanguageChange: (AppLanguage) -> Unit,
-    onLogout: () -> Unit,
-    onUploadCompleted: (CatalogItem) -> Unit
-) {
-    var selectedTab by rememberSaveable { mutableStateOf(MainTab.HOME) }
-    var showProfile by rememberSaveable { mutableStateOf(false) }
-
-    Scaffold(
-        containerColor = Color(0xFFF6F1E8),
-        bottomBar = {
-            NavigationBar {
-                MainTab.entries.forEach { tab ->
-                    NavigationBarItem(
-                        selected = selectedTab == tab,
-                        onClick = { selectedTab = tab },
-                        icon = {
-                            Icon(
-                                imageVector = when (tab) {
-                                    MainTab.NEWS -> Icons.Outlined.Newspaper
-                                    MainTab.SEARCH -> Icons.Outlined.Search
-                                    MainTab.HOME -> Icons.Outlined.Home
-                                    MainTab.CATEGORIES -> Icons.Outlined.Dashboard
-                                    MainTab.FEED -> Icons.Outlined.Article
-                                },
-                                contentDescription = null
-                            )
-                        },
-                        label = { Text(t.tabLabel(tab)) }
-                    )
-                }
-            }
-        },
-        topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("SAMP MARKET", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
-                    Text(profile.baseUrl, color = Color(0xFF6D655E), fontSize = 13.sp)
-                }
-                IconButton(onClick = { showProfile = !showProfile }) {
-                    Icon(Icons.Outlined.AccountCircle, contentDescription = null, modifier = Modifier.size(30.dp))
-                }
-            }
-        }
-    ) { padding ->
-        Box(modifier = Modifier.padding(padding)) {
-            if (showProfile) {
-                ProfileScreen(
-                    t = t,
-                    profile = profile,
-                    onSaveProfile = onSaveProfile,
-                    onLanguageChange = onLanguageChange,
-                    onLogout = onLogout
-                )
-            } else {
-                when (selectedTab) {
-                    MainTab.HOME -> HomeTab(t, latestItems, newsItems)
-                    MainTab.NEWS -> NewsTab(t, newsItems)
-                    MainTab.SEARCH -> SearchTab(t, latestItems)
-                    MainTab.CATEGORIES -> CategoriesTab(latestItems)
-                    MainTab.FEED -> FeedTab(t, latestItems, onUploadCompleted)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeTab(t: Strings, latestItems: List<CatalogItem>, newsItems: List<String>) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item { HeroCard(t) }
-        item { SectionTitle(t.categories) }
-        item { CategoryRow(listOf("APK", "Mods", "Launchers", "News")) }
-        item { SectionTitle(t.latestPublications) }
-        items(latestItems) { CatalogCard(item = it) }
-        item { SectionTitle(t.news) }
-        items(newsItems) { InfoCard(it) }
-    }
-}
-
-@Composable
-private fun HeroCard(t: Strings) {
-    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent)) {
-        Box(
-            modifier = Modifier
-                .background(Brush.linearGradient(listOf(Color(0xFF005B4F), Color(0xFF0E4F46), Color(0xFFDB7C26))))
-                .padding(20.dp)
-        ) {
-            Column {
-                Text(t.heroTitle, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text(t.heroSubtitle, color = Color.White.copy(alpha = 0.92f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun CategoriesTab(latestItems: List<CatalogItem>) {
-    val grouped = latestItems.groupBy { it.category }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        grouped.forEach { (category, itemsInCategory) ->
-            item { SectionTitle(category) }
-            items(itemsInCategory) { CatalogCard(it) }
-        }
-    }
-}
-
-@Composable
-private fun NewsTab(t: Strings, newsItems: List<String>) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item { SectionTitle(t.news) }
-        items(newsItems) { InfoCard(it) }
-    }
-}
-
-@Composable
-private fun SearchTab(t: Strings, latestItems: List<CatalogItem>) {
-    var query by rememberSaveable { mutableStateOf("") }
-    val filtered = latestItems.filter {
-        it.title.contains(query, ignoreCase = true) || it.category.contains(query, ignoreCase = true)
-    }
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(t.searchHint) },
-            leadingIcon = { Icon(Icons.Outlined.TravelExplore, contentDescription = null) }
-        )
-        Spacer(Modifier.height(16.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(filtered) { CatalogCard(it) }
-        }
-    }
-}
-
-@Composable
-private fun FeedTab(t: Strings, latestItems: List<CatalogItem>, onUploadCompleted: (CatalogItem) -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var uploadProgress by remember { mutableFloatStateOf(0f) }
-    var selectedFileName by rememberSaveable { mutableStateOf("") }
-    var selectedUri by remember { mutableStateOf<Uri?>(null) }
-    var itemTitle by rememberSaveable { mutableStateOf("") }
-    var itemCategory by rememberSaveable { mutableStateOf("APK") }
-
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            selectedUri = uri
-            selectedFileName = queryFileName(uri, context)
-            itemTitle = selectedFileName.substringBeforeLast(".")
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        SectionTitle(t.uploadTitle)
-        InfoCard(t.uploadInfo)
-        OutlinedTextField(value = itemTitle, onValueChange = { itemTitle = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.fileTitle) })
-        OutlinedTextField(value = itemCategory, onValueChange = { itemCategory = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.category) })
-        Button(
-            onClick = { launcher.launch(arrayOf("*/*")) },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF005B4F))
-        ) {
-            Icon(Icons.Outlined.CloudUpload, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(if (selectedFileName.isBlank()) t.pickFile else selectedFileName)
-        }
-        if (uploadProgress > 0f) {
-            LinearProgressIndicator(progress = { uploadProgress }, modifier = Modifier.fillMaxWidth())
-            Text("${(uploadProgress * 100).toInt()}%")
-        }
-        Button(
-            enabled = selectedUri != null && itemTitle.isNotBlank(),
-            onClick = {
-                scope.launch {
-                    uploadProgress = 0f
-                    repeat(20) {
-                        delay(90)
-                        uploadProgress += 0.05f
-                    }
-                    selectedUri?.let { uri ->
-                        onUploadCompleted(
-                            CatalogItem(
-                                title = itemTitle,
-                                description = t.localPublication,
-                                category = itemCategory,
-                                author = "Local user",
-                                rating = 5f,
-                                isApk = selectedFileName.endsWith(".apk", ignoreCase = true)
-                            )
-                        )
-                        if (selectedFileName.endsWith(".apk", ignoreCase = true)) {
-                            openApkInstaller(context, uri, t.installUnavailable)
-                        }
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Outlined.Download, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(t.publish)
-        }
-        if (selectedFileName.endsWith(".apk", ignoreCase = true) && selectedUri != null) {
-            OutlinedButton(onClick = { openApkInstaller(context, selectedUri!!, t.installUnavailable) }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.InstallMobile, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(t.installApk)
-            }
-        }
-        SectionTitle(t.latestPublications)
-        latestItems.forEach { CatalogCard(it) }
-    }
-}
-
-@Composable
-private fun ProfileScreen(
-    t: Strings,
-    profile: ProfileState,
+    home: HomePayload?,
+    files: List<RemoteFile>,
+    message: String,
+    onReload: () -> Unit,
     onSaveProfile: (ProfileState) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
     onLogout: () -> Unit
 ) {
-    var email by rememberSaveable { mutableStateOf(profile.email) }
+    var tab by rememberSaveable { mutableStateOf(MainTab.HOME) }
     var nickname by rememberSaveable { mutableStateOf(profile.nickname) }
     var avatarUrl by rememberSaveable { mutableStateOf(profile.avatarUrl) }
-    var baseUrl by rememberSaveable { mutableStateOf(profile.baseUrl) }
+    var siteUrl by rememberSaveable { mutableStateOf(profile.siteUrl) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        SectionTitle(t.profile)
-        OutlinedTextField(value = email, onValueChange = { email = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.email) })
-        OutlinedTextField(value = nickname, onValueChange = { nickname = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.nickname) })
-        OutlinedTextField(value = avatarUrl, onValueChange = { avatarUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.avatarUrl) })
-        OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.baseUrl) })
-        Button(onClick = { onSaveProfile(ProfileState(email, nickname, avatarUrl, baseUrl)) }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Outlined.Settings, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(t.save)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { onLanguageChange(AppLanguage.UZ) }, modifier = Modifier.weight(1f)) {
-                Text("UZ")
+    Scaffold(
+        containerColor = Color(0xFFF3EFE8),
+        topBar = {
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("SAMP STORE", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(t.owner, color = Color(0xFF6D6661), fontSize = 13.sp)
+                }
+                IconButton(onClick = onReload) {
+                    Icon(Icons.Outlined.Settings, contentDescription = null)
+                }
             }
-            OutlinedButton(onClick = { onLanguageChange(AppLanguage.RU) }, modifier = Modifier.weight(1f)) {
-                Text("RU")
+        },
+        bottomBar = {
+            NavigationBar {
+                listOf(MainTab.HOME, MainTab.NEWS, MainTab.SEARCH, MainTab.PROFILE).forEach { item ->
+                    NavigationBarItem(
+                        selected = tab == item,
+                        onClick = { tab = item },
+                        icon = {
+                            Icon(
+                                imageVector = when (item) {
+                                    MainTab.HOME -> Icons.Outlined.Home
+                                    MainTab.NEWS -> Icons.Outlined.Newspaper
+                                    MainTab.SEARCH -> Icons.Outlined.Search
+                                    MainTab.PROFILE -> Icons.Outlined.AccountCircle
+                                },
+                                contentDescription = null
+                            )
+                        },
+                        label = { Text(t.tabLabel(item)) }
+                    )
+                }
             }
         }
-        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
-            Text(t.logout)
+    ) { padding ->
+        when (tab) {
+            MainTab.HOME -> LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item { HeroCard(t, profile.siteUrl, home?.categories ?: emptyList()) }
+                item { SectionTitle(t.latestFiles) }
+                items(files) { file -> RemoteFileCard(file) }
+            }
+            MainTab.NEWS -> LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item { SectionTitle(t.news) }
+                items(home?.news ?: emptyList()) {
+                    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(it.title, fontWeight = FontWeight.Bold)
+                            Text(it.body, color = Color(0xFF5A5651))
+                        }
+                    }
+                }
+            }
+            MainTab.SEARCH -> Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+                SectionTitle(t.topFiles)
+                Spacer(Modifier.height(12.dp))
+                (home?.topFiles ?: emptyList()).forEach { file ->
+                    RemoteFileCard(file)
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+            MainTab.PROFILE -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                SectionTitle(t.profile)
+                OutlinedTextField(value = nickname, onValueChange = { nickname = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.nickname) })
+                OutlinedTextField(value = avatarUrl, onValueChange = { avatarUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.avatarUrl) })
+                OutlinedTextField(value = siteUrl, onValueChange = { siteUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text(t.siteUrl) })
+                Button(onClick = { onSaveProfile(profile.copy(nickname = nickname, avatarUrl = avatarUrl, siteUrl = siteUrl)) }, modifier = Modifier.fillMaxWidth()) { Text(t.save) }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { onLanguageChange(AppLanguage.UZ) }, modifier = Modifier.weight(1f)) { Text("UZ") }
+                    OutlinedButton(onClick = { onLanguageChange(AppLanguage.RU) }, modifier = Modifier.weight(1f)) { Text("RU") }
+                }
+                OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text(t.logout) }
+                if (message.isNotBlank()) Text(message, color = Color(0xFF0C6B57))
+            }
         }
     }
 }
 
 @Composable
-private fun CatalogCard(item: CatalogItem) {
+private fun HeroCard(t: Strings, siteUrl: String, categories: List<String>) {
+    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Brush.linearGradient(listOf(Color(0xFF0B5A49), Color(0xFF104250), Color(0xFFE6942E))))
+                .padding(20.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(t.heroTitle, color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text(siteUrl, color = Color.White.copy(alpha = 0.88f))
+                Text(categories.joinToString(" • "), color = Color.White.copy(alpha = 0.82f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun RemoteFileCard(file: RemoteFile) {
     Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(item.title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-            Text(item.description, color = Color(0xFF605A55))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F1EA))) {
-                    Text(item.category, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
-                }
-                Spacer(Modifier.width(8.dp))
-                Icon(Icons.Outlined.Star, contentDescription = null, tint = Color(0xFFDB7C26), modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(item.rating.toString())
-            }
-            Text(item.author, color = Color(0xFF005B4F), fontWeight = FontWeight.SemiBold)
+            Text(file.title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(file.description, color = Color(0xFF5D5751))
+            Text("${file.category} • ${file.version} • ${file.size}", color = Color(0xFF0C6B57), fontWeight = FontWeight.SemiBold)
+            Text("${file.authorName} • ${file.downloads} downloads • ${file.rating}★", color = Color(0xFF5D5751))
         }
     }
 }
 
 @Composable
-private fun InfoCard(text: String) {
-    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-        Text(text, modifier = Modifier.padding(16.dp))
+private fun SectionTitle(text: String) {
+    Text(text, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+}
+
+private fun JSONArray.toFiles(): List<RemoteFile> {
+    val items = mutableListOf<RemoteFile>()
+    for (index in 0 until length()) {
+        val json = getJSONObject(index)
+        items += RemoteFile(
+            id = json.optString("id"),
+            title = json.optString("title"),
+            description = json.optString("description"),
+            category = json.optString("category"),
+            version = json.optString("version"),
+            size = json.optString("size"),
+            authorName = json.optString("authorName"),
+            downloads = json.optInt("downloads"),
+            rating = json.optDouble("rating")
+        )
     }
+    return items
 }
 
-@Composable
-private fun SectionTitle(title: String) {
-    Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-}
-
-@Composable
-private fun CategoryRow(items: List<String>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-        items.forEach { label ->
-            Card(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFEEF2EA))
-            ) {
-                Text(label, modifier = Modifier.padding(vertical = 14.dp).fillMaxWidth(), textAlign = TextAlign.Center)
-            }
-        }
+private fun JSONArray.toNews(language: AppLanguage): List<RemoteNews> {
+    val items = mutableListOf<RemoteNews>()
+    val key = if (language == AppLanguage.RU) "ru" else "uz"
+    for (index in 0 until length()) {
+        val json = getJSONObject(index)
+        items += RemoteNews(
+            title = json.getJSONObject("title").optString(key),
+            body = json.getJSONObject("body").optString(key)
+        )
     }
+    return items
 }
 
-private fun queryFileName(uri: Uri, context: Context): String {
-    return context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (cursor.moveToFirst() && index >= 0) cursor.getString(index) else "selected_file"
-    } ?: "selected_file"
-}
-
-private fun openApkInstaller(context: Context, uri: Uri, errorText: String) {
-    runCatching {
-        val installIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(installIntent)
-    }.onFailure {
-        Toast.makeText(context, errorText, Toast.LENGTH_SHORT).show()
-    }
+private fun JSONArray.toCategories(): List<String> {
+    val items = mutableListOf<String>()
+    for (index in 0 until length()) items += getJSONObject(index).optString("name")
+    return items
 }
 
 private data class Strings(
-    val loading: String,
-    val welcomeTitle: String,
-    val authSubtitle: String,
+    val owner: String,
+    val heroTitle: String,
+    val latestFiles: String,
+    val topFiles: String,
+    val news: String,
+    val profile: String,
     val email: String,
     val password: String,
-    val login: String,
-    val register: String,
-    val needAccount: String,
-    val haveAccount: String,
-    val invalidLogin: String,
-    val heroTitle: String,
-    val heroSubtitle: String,
-    val categories: String,
-    val latestPublications: String,
-    val news: String,
-    val searchHint: String,
-    val uploadTitle: String,
-    val uploadInfo: String,
-    val fileTitle: String,
-    val category: String,
-    val pickFile: String,
-    val publish: String,
-    val installApk: String,
-    val localPublication: String,
-    val profile: String,
     val nickname: String,
     val avatarUrl: String,
-    val baseUrl: String,
-    val save: String,
+    val siteUrl: String,
+    val login: String,
+    val register: String,
     val logout: String,
-    val installUnavailable: String,
-    val searchTab: String,
-    val homeTab: String,
-    val feedTab: String
+    val save: String,
+    val needAccount: String,
+    val haveAccount: String,
+    val authSubtitle: String,
+    val networkError: String,
+    val saved: String
 ) {
-    fun tabLabel(tab: MainTab): String = when (tab) {
+    fun tabLabel(item: MainTab): String = when (item) {
+        MainTab.HOME -> if (login == "Kirish") "Bosh" else "Главная"
         MainTab.NEWS -> news
-        MainTab.SEARCH -> searchTab
-        MainTab.HOME -> homeTab
-        MainTab.CATEGORIES -> categories
-        MainTab.FEED -> feedTab
+        MainTab.SEARCH -> if (login == "Kirish") "Top" else "Топ"
+        MainTab.PROFILE -> profile
     }
 }
 
 private fun texts(language: AppLanguage): Strings {
     return when (language) {
         AppLanguage.UZ -> Strings(
-            loading = "Yuklanmoqda...",
-            welcomeTitle = "Xush kelibsiz",
-            authSubtitle = "Email va parol orqali tizimga kiring yoki ro'yxatdan o'ting.",
+            owner = "SAMP STUDIO & AZIZ",
+            heroTitle = "Bir xil baza bilan ishlaydigan SAMP STORE",
+            latestFiles = "Oxirgi fayllar",
+            topFiles = "Top fayllar",
+            news = "Yangiliklar",
+            profile = "Profil",
             email = "Email",
             password = "Parol",
+            nickname = "Nik",
+            avatarUrl = "Avatar URL",
+            siteUrl = "Sayt manzili",
             login = "Kirish",
             register = "Ro'yxatdan o'tish",
+            logout = "Chiqish",
+            save = "Saqlash",
             needAccount = "Akkaunt yo'qmi?",
             haveAccount = "Akkaunt bormi?",
-            invalidLogin = "Email yoki parol noto'g'ri",
-            heroTitle = "O'yin fayllari va APK'lar bir joyda",
-            heroSubtitle = "Lokal server manzilini profil bo'limidan xohlagan payt o'zgartiring.",
-            categories = "Kategoriyalar",
-            latestPublications = "Oxirgi publikatsiyalar",
-            news = "Yangiliklar",
-            searchHint = "Fayl yoki kategoriya qidiring",
-            uploadTitle = "Fayl yuklash",
-            uploadInfo = "Lokal rejimda fayl tanlanadi, progress ko'rsatiladi va APK bo'lsa o'rnatish tugmasi chiqadi.",
-            fileTitle = "Fayl nomi",
-            category = "Kategoriya",
-            pickFile = "Faylni tanlash",
-            publish = "Publikatsiya qilish",
-            installApk = "APK o'rnatish",
-            localPublication = "Lokal publikatsiya qilindi",
-            profile = "Profil",
-            nickname = "Nik",
-            avatarUrl = "Profil rasmi URL",
-            baseUrl = "Server URL",
-            save = "Saqlash",
-            logout = "Chiqish",
-            installUnavailable = "APK o'rnatishni ochib bo'lmadi",
-            searchTab = "Qidiruv",
-            homeTab = "Bosh",
-            feedTab = "Lenta"
+            authSubtitle = "Telefon va sayt endi bir xil backend hamda bitta baza bilan ishlaydi.",
+            networkError = "Tarmoq yoki server xatosi",
+            saved = "Saqlandi"
         )
         AppLanguage.RU -> Strings(
-            loading = "Загрузка...",
-            welcomeTitle = "Добро пожаловать",
-            authSubtitle = "Вход или регистрация по email и паролю.",
+            owner = "SAMP STUDIO & AZIZ",
+            heroTitle = "SAMP STORE с единой базой данных",
+            latestFiles = "Последние файлы",
+            topFiles = "Популярные файлы",
+            news = "Новости",
+            profile = "Профиль",
             email = "Email",
             password = "Пароль",
-            login = "Войти",
-            register = "Регистрация",
-            needAccount = "Нет аккаунта?",
-            haveAccount = "Уже есть аккаунт?",
-            invalidLogin = "Неверный email или пароль",
-            heroTitle = "Игровые файлы и APK в одном месте",
-            heroSubtitle = "Локальный адрес сервера можно менять в профиле в любой момент.",
-            categories = "Категории",
-            latestPublications = "Последние публикации",
-            news = "Новости",
-            searchHint = "Поиск файла или категории",
-            uploadTitle = "Загрузка файла",
-            uploadInfo = "В локальном режиме выбирается файл, показывается прогресс и для APK доступна установка.",
-            fileTitle = "Название файла",
-            category = "Категория",
-            pickFile = "Выбрать файл",
-            publish = "Опубликовать",
-            installApk = "Установить APK",
-            localPublication = "Локальная публикация завершена",
-            profile = "Профиль",
             nickname = "Ник",
             avatarUrl = "URL аватара",
-            baseUrl = "URL сервера",
-            save = "Сохранить",
+            siteUrl = "Адрес сайта",
+            login = "Войти",
+            register = "Регистрация",
             logout = "Выйти",
-            installUnavailable = "Не удалось открыть установку APK",
-            searchTab = "Поиск",
-            homeTab = "Главная",
-            feedTab = "Лента"
+            save = "Сохранить",
+            needAccount = "Нет аккаунта?",
+            haveAccount = "Уже есть аккаунт?",
+            authSubtitle = "Телефон и сайт теперь работают через один backend и одну базу.",
+            networkError = "Ошибка сети или сервера",
+            saved = "Сохранено"
         )
     }
 }
