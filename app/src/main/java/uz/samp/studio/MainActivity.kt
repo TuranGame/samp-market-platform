@@ -114,7 +114,7 @@ private data class ProfileState(
     val email: String = "",
     val nickname: String = "SAMP STUDIO & AZIZ",
     val avatarUrl: String = "",
-    val siteUrl: String = "https://turan-rp.uz",
+    val siteUrl: String = "http://185.204.3.106",
     val token: String = ""
 )
 
@@ -252,7 +252,7 @@ private fun SampStoreApp(context: Context) {
                 email = prefs.getString("email", "") ?: "",
                 nickname = prefs.getString("nickname", "SAMP STUDIO & AZIZ") ?: "SAMP STUDIO & AZIZ",
                 avatarUrl = prefs.getString("avatar_url", "") ?: "",
-                siteUrl = prefs.getString("site_url", "https://turan-rp.uz") ?: "https://turan-rp.uz",
+                siteUrl = prefs.getString("site_url", "http://185.204.3.106") ?: "http://185.204.3.106",
                 token = prefs.getString("token", "") ?: ""
             )
         )
