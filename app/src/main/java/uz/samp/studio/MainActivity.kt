@@ -111,7 +111,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab { HOME, CHAT, PROFILE, ADMIN }
+private enum class Tab { HOME, CHAT, SEARCH, PROFILE, ADMIN }
 private enum class Role(val value: String) { USER("user"), DEVELOPER("developer") }
 
 private data class CommentItem(val id: String, val authorName: String, val message: String)
@@ -377,6 +377,7 @@ private fun SampStoreApp(context: Context) {
                 NavigationBar {
                     NavigationBarItem(selected = tab == Tab.HOME, onClick = { tab = Tab.HOME }, icon = { Icon(Icons.Outlined.Home, null) }, label = { Text("Home") })
                     NavigationBarItem(selected = tab == Tab.CHAT, onClick = { tab = Tab.CHAT }, icon = { Icon(Icons.Outlined.Chat, null) }, label = { Text("Chat") })
+                    NavigationBarItem(selected = tab == Tab.SEARCH, onClick = { tab = Tab.SEARCH }, icon = { Icon(Icons.Outlined.Search, null) }, label = { Text("Qidirish") })
                     NavigationBarItem(selected = tab == Tab.PROFILE, onClick = { tab = Tab.PROFILE }, icon = { Icon(Icons.Outlined.Person, null) }, label = { Text("Profile") })
                     if (profile.role == "admin" && profile.username == "Daler_Baltaev") {
                         NavigationBarItem(selected = tab == Tab.ADMIN, onClick = { tab = Tab.ADMIN }, icon = { Icon(Icons.Outlined.AdminPanelSettings, null) }, label = { Text("Admin") })
@@ -437,6 +438,23 @@ private fun SampStoreApp(context: Context) {
                             }.onFailure { msg = it.message ?: "Send failed" }
                         }
                     }
+                )
+                Tab.SEARCH -> SearchScreen(
+                    modifier = Modifier.padding(padding),
+                    files = files,
+                    categories = home.categories,
+                    onSearch = { query ->
+                        scope.launch {
+                            runCatching {
+                                val results = Api.files(query = query)
+                                files = results
+                            }.onFailure { msg = it.message ?: "Search failed" }
+                        }
+                    },
+                    onSelectApp = { appId ->
+                        selectedApp = appId
+                    },
+                    onBack = { tab = Tab.HOME }
                 )
                 Tab.PROFILE -> ProfileScreen(
                     modifier = Modifier.padding(padding),
@@ -1094,6 +1112,164 @@ private fun AdminScreen(
                     Text(c.fileTitle, fontWeight = FontWeight.Bold)
                     Text(c.message, color = Color(0xFF607D8B))
                     OutlinedButton(onClick = { onDeleteComment(c.fileId, c.commentId) }) { Text("Delete comment") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchScreen(
+    modifier: Modifier,
+    files: List<FileItem>,
+    categories: List<String>,
+    onSearch: (String) -> Unit,
+    onSelectApp: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    var searchText by rememberSaveable { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<FileItem>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(false) }
+
+    // Debounce search
+    LaunchedEffect(searchText) {
+        if (searchText.isBlank()) {
+            results = emptyList()
+            return@LaunchedEffect
+        }
+        isLoading = true
+        delay(300)
+        onSearch(searchText)
+    }
+
+    Column(modifier = modifier.fillMaxSize().background(Color(0xFFF3F7FF))) {
+        // Search header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Button(
+                onClick = onBack,
+                modifier = Modifier.size(40.dp),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFFE3F2FD)),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Text("← ", color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
+            }
+
+            // Search field
+            OutlinedTextField(
+                value = searchText,
+                onValueChange = { searchText = it },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+                label = { Text("Oyinlar, dasturlar...") },
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                trailingIcon = {
+                    if (searchText.isNotEmpty()) {
+                        IconButton(onClick = { searchText = "" }) {
+                            Icon(Icons.Outlined.ErrorOutline, null, tint = Color(0xFF999999), modifier = Modifier.size(20.dp))
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(24.dp)
+            )
+        }
+
+        // Content
+        if (searchText.isBlank()) {
+            // Show categories when empty
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                item {
+                    Text("Kategoriyalar", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = Color(0xFF0A3D91))
+                }
+                item {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(categories) { cat ->
+                            AssistChip(
+                                onClick = {
+                                    searchText = ""
+                                    onSearch(cat)
+                                },
+                                label = { Text(cat) },
+                                colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFFE3F2FD))
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            // Show results grid
+            if (files.isEmpty() && !isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Outlined.Search, null, modifier = Modifier.size(64.dp), tint = Color(0xFFCCCCCC))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Natija topilmadi", style = MaterialTheme.typography.titleMedium, color = Color(0xFF999999))
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxSize().padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    items(files) { file ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(260.dp)
+                                .clickable { onSelectApp(file.id) },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                // App icon
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(100.dp)
+                                        .background(
+                                            Brush.linearGradient(listOf(Color(0xFF4FC3F7), Color(0xFFAB47BC))),
+                                            RoundedCornerShape(12.dp)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(file.title.take(1), color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineLarge)
+                                }
+
+                                // App info
+                                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(file.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                                    Text(file.category, color = Color(0xFF607D8B), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
+
+                                    // Rating and downloads
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("${file.rating}★", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, color = Color(0xFFFB8C00))
+                                        Text("${file.downloads}+", style = MaterialTheme.typography.labelSmall, color = Color(0xFF3949AB))
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
