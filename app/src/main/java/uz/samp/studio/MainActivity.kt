@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -360,7 +361,7 @@ private fun SampStoreApp(context: Context) {
     Scaffold(
         topBar = {
             if (selectedApp == null) {
-                Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.statusBarsPadding().fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("SAMP STORE", fontWeight = FontWeight.Black, color = Color(0xFF0A3D91))
                         Text("Web + APK parity", color = Color(0xFF607D8B))
