@@ -14,6 +14,8 @@ const seedData = {
     owner: "SAMP STUDIO & AZIZ"
   },
   users: [],
+  notifications: [],
+  messages: [],
   categories: [
     { id: "cat-apk", name: "APK", slug: "apk", accent: "#1e8e63" },
     { id: "cat-launcher", name: "Launcher", slug: "launcher", accent: "#f39c4a" },
@@ -63,6 +65,7 @@ const seedData = {
       comments: [],
       ratings: [],
       downloads: 1260,
+      status: "approved",
       createdAt: new Date().toISOString()
     },
     {
@@ -81,6 +84,7 @@ const seedData = {
       comments: [],
       ratings: [],
       downloads: 820,
+      status: "approved",
       createdAt: new Date(Date.now() - 7200000).toISOString()
     }
   ]
@@ -108,6 +112,55 @@ export function readStore() {
   if (!parsed.meta) {
     parsed.meta = seedData.meta;
   }
+  parsed.notifications ??= [];
+  parsed.messages ??= [];
+  parsed.users ??= [];
+  parsed.news ??= [];
+  parsed.files ??= [];
+  parsed.categories ??= [];
+  parsed.users = parsed.users.map((user) => ({
+    avatarUrl: "",
+    username: user.username || user.nickname || String(user.email || "").split("@")[0] || `user-${nanoid(6)}`,
+    role: user.role || "user",
+    developerApproved: user.role === "developer" ? Boolean(user.developerApproved) : true,
+    canChat: user.canChat !== false,
+    canComment: user.canComment !== false,
+    canUpload: user.canUpload !== false,
+    blockedUntil: user.blockedUntil || "",
+    blockReason: user.blockReason || "",
+    lastSeenAt: user.lastSeenAt || user.createdAt || new Date().toISOString(),
+    downloadHistory: Array.isArray(user.downloadHistory) ? user.downloadHistory : [],
+    ...user
+  }));
+  parsed.files = parsed.files.map((file) => ({
+    status: file.status || "approved",
+    ratings: file.ratings || [],
+    comments: file.comments || [],
+    downloads: file.downloads || 0,
+    downloadUrl: file.downloadUrl || "",
+    fileType: file.fileType || "file",
+    packageName: file.packageName || "",
+    coverUrl: file.coverUrl || "",
+    fileUrl: file.fileUrl || "",
+    screenshotUrls: Array.isArray(file.screenshotUrls) ? file.screenshotUrls : [],
+    scanStatus: file.scanStatus || "clean",
+    scanEngine: file.scanEngine || "SAMP Shield",
+    isSafe: file.isSafe !== false,
+    ...file
+  }));
+  parsed.messages = parsed.messages.map((message) => ({
+    status: message.status || "sent",
+    deliveredAt: message.deliveredAt || null,
+    readAt: message.readAt || null,
+    deletedFor: Array.isArray(message.deletedFor) ? message.deletedFor : [],
+    ...message
+  }));
+  parsed.notifications = parsed.notifications.map((notification) => ({
+    title: notification.title || "",
+    chatUserId: notification.chatUserId || "",
+    createdAt: notification.createdAt || new Date().toISOString(),
+    ...notification
+  }));
   return parsed;
 }
 
